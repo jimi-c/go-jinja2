@@ -8,43 +8,62 @@ import (
 
 type Context struct {
   Variables map[string]VariableType
-  Filters map[string]func(VariableType, ...interface{})(VariableType, error)
-  Tests map[string]func(VariableType, ...interface{})(VariableType, error)
+  Filters map[string]PyCallable
+  Tests map[string]PyCallable
+  PyCalls map[string]PyCallable
 }
+
 func (self *Context) LoadDefaultFilters() {
-  self.Filters["int"] = func(val VariableType, args...interface{}) (VariableType, error) {
-    switch val.Type {
-    case PY_TYPE_INT:
+  self.Filters["int"] = PyCallable {
+    func(args []VariableType) (VariableType, error) {
+      val := args[0]
+      switch val.Type {
+      case PY_TYPE_INT:
+        return val, nil
+      case PY_TYPE_STRING:
+        new_v, err := strconv.ParseInt(val.Data.(string), 10, 10)
+        if err != nil {
+          return VariableType{PY_TYPE_UNDEFINED, nil}, err
+        }
+        return VariableType{PY_TYPE_INT, new_v}, nil
+      }
       return val, nil
-    case PY_TYPE_STRING:
-      new_v, err := strconv.ParseInt(val.Data.(string), 10, 10)
+    }, []CallableArg {
+      {"val", VariableType{PY_TYPE_UNDEFINED, nil},},
+    },
+  }
+  self.Filters["bool"] = PyCallable {
+    func(args []VariableType) (VariableType, error) {
+      val := args[0]
+      b_val, err := val.AsBool()
       if err != nil {
         return VariableType{PY_TYPE_UNDEFINED, nil}, err
+      } else {
+        return VariableType{PY_TYPE_BOOL, b_val}, nil
       }
-      return VariableType{PY_TYPE_INT, new_v}, nil
-    }
-    return val, nil
-  }
-  self.Filters["bool"] = func(val VariableType, args...interface{}) (VariableType, error) {
-    b_val, err := val.AsBool()
-    if err != nil {
-      return VariableType{PY_TYPE_UNDEFINED, nil}, err
-    } else {
-      return VariableType{PY_TYPE_BOOL, b_val}, nil
-    }
+    }, []CallableArg {
+      {"val", VariableType{PY_TYPE_UNDEFINED, nil},},
+    },
   }
 }
+
 func (self *Context) LoadDefaultTests() {
-  self.Tests["defined"] = func(val VariableType, args...interface{}) (VariableType, error) {
-    // FIXME: the jinja2 builtin accepts a value as an arg,
-    //        which is returned if the test evaluates to true
-    if val.Type == PY_TYPE_UNDEFINED {
-      return VariableType{PY_TYPE_BOOL, false}, nil
-    } else {
-      return VariableType{PY_TYPE_BOOL, true}, nil
-    }
+  self.Tests["defined"] = PyCallable{
+    func(args []VariableType) (VariableType, error) {
+      // FIXME: the jinja2 builtin accepts a value as an arg,
+      //        which is returned if the test evaluates to true
+      val := args[0]
+      if val.Type == PY_TYPE_UNDEFINED {
+        return VariableType{PY_TYPE_BOOL, false}, nil
+      } else {
+        return VariableType{PY_TYPE_BOOL, true}, nil
+      }
+    }, []CallableArg {
+      {"val", VariableType{PY_TYPE_UNDEFINED, nil},},
+    },
   }
 }
+
 func (self *Context) AddVariables(vars map[string]interface{}) error {
   for k, v := range vars {
     py_v, err := GoVarToPyVar(v)
@@ -55,6 +74,7 @@ func (self *Context) AddVariables(vars map[string]interface{}) error {
   }
   return nil
 }
+
 func NewContext(vars map[string]interface{}) *Context {
   c := new(Context)
   c.Variables = make(map[string]VariableType)
@@ -64,8 +84,9 @@ func NewContext(vars map[string]interface{}) *Context {
       panic(err)
     }
   }
-  c.Filters = make(map[string]func(VariableType, ...interface{})(VariableType, error))
-  c.Tests = make(map[string]func(VariableType, ...interface{})(VariableType, error))
+  c.Filters = make(map[string]PyCallable)
+  c.Tests = make(map[string]PyCallable)
+  c.PyCalls = make(map[string]PyCallable)
   c.LoadDefaultFilters()
   c.LoadDefaultTests()
   return c
